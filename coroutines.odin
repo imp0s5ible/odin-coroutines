@@ -81,7 +81,7 @@ start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A) {
 		final_ret := cor.cor_proc(arg_c)
 		end(final_ret)
 	}
-	return
+	unreachable()
 }
 
 @(private = "file")
