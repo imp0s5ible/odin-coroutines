@@ -18,7 +18,6 @@ Coroutine :: struct($A: typeid, $R: typeid) #no_copy {
 }
 
 DEFAULT_STACK_SIZE :: mem.Megabyte
-
 make :: proc(
 	cor_proc: proc(arg: $A) -> $R,
 	stack_size := DEFAULT_STACK_SIZE,
@@ -77,6 +76,7 @@ start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A) {
 		return
 	} else {
 		context.user_ptr = rawptr(cor_c)
+		context.user_index = (^int)(raw_data(COROUTINE_MARKER))^
 		// we want this so cor_proc can run its defers
 		final_ret := cor.cor_proc(arg_c)
 		end(final_ret)
@@ -93,13 +93,21 @@ end :: #force_inline proc(ret: $R) {
 	}
 }
 
+COROUTINE_MARKER_C :: "COROUTINECONTEXT"
+@(rodata)
+COROUTINE_MARKER: string = COROUTINE_MARKER_C
+
 @(private = "file")
 get_coroutine_for_yield :: #force_inline proc($R: typeid) -> (cor: ^Coroutine(rawptr, R)) {
+	assert(size_of(int) <= len(COROUTINE_MARKER_C))
+	if context.user_index != (^int)(raw_data(COROUTINE_MARKER))^ {
+		panic("Attempted to yield from non-coroutine context")
+	}
 	cor = (^Coroutine(rawptr, R))(context.user_ptr)
 	if cor == nil {
-		panic("Attempted to yield from non-coroutine!")
+		panic("Missing coroutine object from coroutine context")
 	} else if cor.ret_type_id != typeid_of(R) {
-		panic("Attempted to yield from coroutine with incorrect type!")
+		panic("Attempted to yield from coroutine with incorrect type")
 	}
 	return
 }
