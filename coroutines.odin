@@ -18,6 +18,19 @@ Coroutine :: struct($A: typeid, $R: typeid) #no_copy {
 }
 
 DEFAULT_STACK_SIZE :: mem.Megabyte
+/*
+Create a Coroutine struct of the appropriate type given the provided proc
+
+Inputs:
+- cor_proc: A proc taking a single argument and returning a single value
+- stack_size: The amount of space to allocate for the stack, in bytes. Default is one megabyte
+- allocator: The allocator with which to allocate storage for the call stack. Default is context.allocator
+
+Returns:
+- A Coroutine struct with call stack storage allocated, on which `start` can be called later
+- An allocator error, if this is not None then the returned Coroutine struct is not valid, and no cleanup is necessary
+*/
+@(require_results)
 make :: proc(
 	cor_proc: proc(arg: $A) -> $R,
 	stack_size := DEFAULT_STACK_SIZE,
@@ -34,24 +47,68 @@ make :: proc(
 }
 
 @(thread_local)
+@(private)
 init_stack_beg: libc.jmp_buf
 
+/*
+Begins the execution of the coroutine struct by copying the context and argument from the call site
+into the first stack frame of the coroutine.
+Can only be called directly after `make`!
+After this, `next` can be called on the coroutine to get its first `return``/`yield`` value.
+
+Inputs:
+- cor: The coroutine struct to start
+*/
 start :: proc(cor: ^Coroutine($A, $R), arg: A) {
 	libc.setjmp(&init_stack_beg)
 	start_coroutine(cor, arg)
 }
 
+/*
+Switches contexts to the coroutine proc and runs it until the next `yield` or `return`.
+Can be used as a `for` loop iterator.
+
+Inputs:
+- cor: The coroutine to run
+
+Returns:
+- The return value of the last `yield` or `return`
+- `false` if the coroutine execution has finished, `true` otherwise
+If execution has finished, it will keep returning the final `return` value.
+*/
 next :: #force_inline proc(cor: ^Coroutine($A, $R)) -> (R, bool) {
 	context_switch(&cor.parent_env, &cor.coroutine_env)
 	return cor.ret, !cor.finished
 }
 
+/*
+Switches contexts back to the caller and returns a value to its `next` call.
+
+Note: Calls to `yield` are not statically type checked, instead the `Coroutine`
+struct stores the `typeid` of the correct return type, against which this call is checked.
+This may trip you up if you're returning typeless literals which may not coerce to the correct
+type here.
+
+Inputs:
+- ret: The value to return to the caller
+*/
 yield :: #force_inline proc(ret: $R) {
 	cor := get_coroutine_for_yield(R)
 	cor.ret = ret
 	context_switch(&cor.coroutine_env, &cor.parent_env)
 }
 
+/*
+Destroys the coroutine context by freeing the stack space allocated for it
+and zeroing the struct's contents, returning it to an uninitialized state.
+
+Note: The Coroutine struct is only responsible for freeing its own call stack space.
+Freeing resources acquired by the coroutine proc itself is the responsibility of the user.
+
+Inputs:
+- cor: The coroutine to free and destroy
+- allocator: The allocator with which the stack deallocation is done. This should be the same as the one passed to `make` earlier.
+*/
 destroy :: proc(cor: ^Coroutine($A, $R), allocator := context.allocator) {
 	delete(cor.stack, allocator)
 	cor^ = {}
@@ -93,7 +150,9 @@ end :: #force_inline proc(ret: $R) {
 	}
 }
 
+@(private = "file")
 COROUTINE_MARKER_C :: "COROUTINECONTEXT"
+@(private = "file")
 @(rodata)
 COROUTINE_MARKER: string = COROUTINE_MARKER_C
 
@@ -120,7 +179,9 @@ context_switch :: #force_inline proc(from: ^libc.jmp_buf, to: ^libc.jmp_buf) {
 }
 
 // TODO: Non-portable, implement for other platforms
+@(private = "file")
 STACK_PTR_OFFSET_C :: 16
+@(private = "file")
 STACK_PTR_OFFSET: uintptr = STACK_PTR_OFFSET_C
 
 @(private = "file")
