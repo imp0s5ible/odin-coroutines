@@ -68,5 +68,5 @@ main :: proc() {
 - There is no way to have a tiny in-line stack with no allocations (i.e. for small coroutines that are created/called often)
 
 ## (Known) Non-portable Parts
-- We currently assume the stack grows downwards (from high towards low addresses)
-- We currently assume that the stack pointer is stored at offset 16 in the `jmp_buf` struct, and that setting this alone is enough to transplant the call stack. This seems to be the case for Odin's libc on Windows, but may not be the case for other platforms and implementations of libc
+- We assume the stack grows downwards (from high towards low addresses)
+- We assume the architecture has such a thing as *a* stack pointer, and that setting it to a valid address is enough to switch the call stack out. This is not always the case i.e. wasm is a stack based VM, and ARM has more than one stack pointer.
