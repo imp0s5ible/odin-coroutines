@@ -134,7 +134,7 @@ start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A) {
 		end := get_stack_pointer(&cor.coroutine_env)
 		frame_len := int(uintptr(beg) - uintptr(end))
 		assert(frame_len < len(cor.stack))
-		mem.copy(&cor.stack[len(cor.stack) - frame_len], end, frame_len + 16)
+		mem.copy(&cor.stack[len(cor.stack) - frame_len], end, frame_len)
 		set_stack_pointer(&cor.coroutine_env, &cor.stack[len(cor.stack) - frame_len])
 		init_stack_beg = {}
 		return
