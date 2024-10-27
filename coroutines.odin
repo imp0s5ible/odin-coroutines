@@ -53,8 +53,14 @@ init_stack_beg: libc.jmp_buf
 /*
 Begins the execution of the coroutine struct by copying the context and argument from the call site
 into the first stack frame of the coroutine.
+
 Can only be called directly after `make`!
+
 After this, `next` can be called on the coroutine to get its first `return``/`yield`` value.
+
+Note: `context.user_index` and `context.user_ptr` will be overwritten inside the coroutine.
+If you need to use these, create a scope in which to overwrite them, and refrain from calling
+`yield` while in this scope.
 
 Inputs:
 - cor: The coroutine struct to start
