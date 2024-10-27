@@ -62,6 +62,10 @@ main :: proc() {
 - The user is responsible for freeing any resources used/acquired by the coroutine, by either letting the `defer`ed statements run via running the coroutine to the end, or by manually freeing them
 - You can normally return from a coroutine proc, this counts as your last `yield` and should guarantee that all `defer`ed statements are run as long as the coroutine is run to the end.
 - Due to its signature, `next` can be used as a for-loop proc
+- `jmp_buf` is huge, probably needlessly
+- Only one argument and return value are supported
+- There are no functions for `await`ing conditions in coroutines or having coroutines be in a waiting status, they always must run to the next return value
+- There is no way to have a tiny in-line stack with no allocations (i.e. for small coroutines that are created/called often)
 
 ## (Known) Non-portable Parts
 - We currently assume the stack grows downwards (from high towards low addresses)
