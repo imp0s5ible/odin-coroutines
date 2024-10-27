@@ -1,6 +1,11 @@
-# odin-coroutines
+# Odin Coroutines
 A Simple Coroutines Library for the Odin Programming Language
+
 This library uses the C standard library's `setjmp` and `longjmp` functions to switch execution contexts and provide coroutines with full stack support, taking advantage of Odin's execution context feature to improve developer ergonomics.
+
+**Warning:** This is **experimental software** that has *not* been thoroughly tested and is **not portable what so ever!**
+
+**Use at your own risk!**
 
 ## Usage Example
 Simply copy `coroutines.odin` to a directory of your choice, or clone this repo as a submodule, for example:
