@@ -58,6 +58,7 @@ After this, `next` can be called on the coroutine to get its first `return``/`yi
 
 Inputs:
 - cor: The coroutine struct to start
+- arg: The argument to pass to the coroutine proc
 */
 start :: proc(cor: ^Coroutine($A, $R), arg: A) {
 	libc.setjmp(&init_stack_beg)
