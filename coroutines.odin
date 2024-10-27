@@ -17,7 +17,7 @@ Coroutine :: struct($A: typeid, $R: typeid) #no_copy {
 	coroutine_env: libc.jmp_buf,
 }
 
-DEFAULT_STACK_SIZE :: mem.Megabyte
+DEFAULT_STACK_SIZE :: #config(COROUTINE_DEFAULT_STACK_SIZE, mem.Megabyte)
 
 /*
 Create a Coroutine struct of the appropriate type given the provided proc
