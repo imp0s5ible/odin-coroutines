@@ -158,7 +158,7 @@ COROUTINE_MARKER: string = COROUTINE_MARKER_C
 
 @(private = "file")
 get_coroutine_for_yield :: #force_inline proc($R: typeid) -> (cor: ^Coroutine(rawptr, R)) {
-	assert(size_of(int) <= len(COROUTINE_MARKER_C))
+	#assert(size_of(int) <= len(COROUTINE_MARKER_C))
 	if context.user_index != (^int)(raw_data(COROUTINE_MARKER))^ {
 		panic("Attempted to yield from non-coroutine context")
 	}
