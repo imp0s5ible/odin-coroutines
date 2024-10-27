@@ -18,6 +18,7 @@ Coroutine :: struct($A: typeid, $R: typeid) #no_copy {
 }
 
 DEFAULT_STACK_SIZE :: mem.Megabyte
+
 /*
 Create a Coroutine struct of the appropriate type given the provided proc
 
@@ -46,10 +47,6 @@ make :: proc(
 	return
 }
 
-@(thread_local)
-@(private)
-init_stack_beg: libc.jmp_buf
-
 /*
 Begins the execution of the coroutine struct by copying the context and argument from the call site
 into the first stack frame of the coroutine.
@@ -67,8 +64,8 @@ Inputs:
 - arg: The argument to pass to the coroutine proc
 */
 start :: proc(cor: ^Coroutine($A, $R), arg: A) {
-	libc.setjmp(&init_stack_beg)
-	start_coroutine(cor, arg)
+    init_stack_beg := asm() -> rawptr{GET_STACK_PTR,"=r"}()
+	start_coroutine(cor, arg, init_stack_beg)
 }
 
 /*
@@ -117,26 +114,30 @@ Inputs:
 - allocator: The allocator with which the stack deallocation is done. This should be the same as the one passed to `make` earlier.
 */
 destroy :: proc(cor: ^Coroutine($A, $R), allocator := context.allocator) {
-	delete(cor.stack, allocator)
 	cor^ = {}
 }
 
 @(private = "file")
-start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A) {
+start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A, init_stack_beg: rawptr) {
 	cor_c := cor
 	arg_c := arg
+	/*
+        Copy the stack to our buffer and point the jmp_buf stack pointer to it.
+        Currently this is non-portable as we assume the stack grows downward.
+    */
+	stack_beg := init_stack_beg
+    stack_end := asm() -> rawptr{GET_STACK_PTR,"=r"}()
+	frame_len := int(uintptr(stack_beg) - uintptr(stack_end))
+	assert(frame_len < len(cor.stack))
+    
+    // Anything below this line will be uninitialized after jumping to the allocated stack
+	mem.copy(&cor.stack[len(cor.stack) - frame_len], stack_end, frame_len)
+
+	desired_stack_pointer := rawptr(&cor.stack[len(cor.stack) - frame_len])
+	asm(rawptr) #side_effect {SET_STACK_PTR,"r"}(desired_stack_pointer)
+
 	if 0 == libc.setjmp(&cor.coroutine_env) {
-		/*
-            Copy the stack to our buffer and point the jmp_buf stack pointer to it.
-            Currently this is non-portable as we assume the stack grows downward.
-        */
-		beg := get_stack_pointer(&init_stack_beg)
-		end := get_stack_pointer(&cor.coroutine_env)
-		frame_len := int(uintptr(beg) - uintptr(end))
-		assert(frame_len < len(cor.stack))
-		mem.copy(&cor.stack[len(cor.stack) - frame_len], end, frame_len)
-		set_stack_pointer(&cor.coroutine_env, &cor.stack[len(cor.stack) - frame_len])
-		init_stack_beg = {}
+	    asm(rawptr) #side_effect {SET_STACK_PTR,"r"}(stack_end)
 		return
 	} else {
 		context.user_ptr = rawptr(cor_c)
@@ -156,12 +157,6 @@ end :: #force_inline proc(ret: $R) {
 		cor.finished = true
 	}
 }
-
-@(private = "file")
-COROUTINE_MARKER_C :: "COROUTINECONTEXT"
-@(private = "file")
-@(rodata)
-COROUTINE_MARKER: string = COROUTINE_MARKER_C
 
 @(private = "file")
 get_coroutine_for_yield :: #force_inline proc($R: typeid) -> (cor: ^Coroutine(rawptr, R)) {
@@ -185,20 +180,19 @@ context_switch :: #force_inline proc(from: ^libc.jmp_buf, to: ^libc.jmp_buf) {
 	}
 }
 
-// TODO: Non-portable, implement for other platforms
 @(private = "file")
-STACK_PTR_OFFSET_C :: 16
-@(private = "file")
-STACK_PTR_OFFSET: uintptr = STACK_PTR_OFFSET_C
+COROUTINE_MARKER_C :: "COROUTINECONTEXT"
 
 @(private = "file")
-set_stack_pointer :: #force_inline proc(jmp: ^libc.jmp_buf, ptr: rawptr) {
-	ptr := ptr
-	mem.copy(rawptr(uintptr(jmp) + STACK_PTR_OFFSET), &ptr, size_of(rawptr))
-}
+@(rodata)
+COROUTINE_MARKER: string = COROUTINE_MARKER_C
 
 @(private = "file")
-get_stack_pointer :: #force_inline proc(jmp: ^libc.jmp_buf) -> (result: rawptr) {
-	mem.copy(&result, rawptr(uintptr(jmp) + STACK_PTR_OFFSET), size_of(rawptr))
-	return
-}
+GET_STACK_PTR :: "mov %rsp, $0" when ODIN_ARCH == .amd64 else
+                 "mov %esp, $0" when ODIN_ARCH == .i386 else
+                 #panic("odin-coroutines: Unsupported architecture")
+
+@(private = "file")
+SET_STACK_PTR :: "mov $0, %rsp" when ODIN_ARCH == .amd64 else
+                 "mov $0, %esp" when ODIN_ARCH == .i386 else
+                 #panic("odin-coroutines: Unsupported architecture")
