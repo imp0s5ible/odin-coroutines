@@ -7,14 +7,17 @@ import "core:log"
 import "core:mem"
 import "core:reflect"
 
-Coroutine :: struct($A: typeid, $R: typeid) #no_copy {
-	ret_type_id:   typeid,
+Coroutine :: struct($R: typeid) #no_copy {
 	ret:           R,
 	finished:      bool,
-	cor_proc:      proc(arg: A) -> R,
 	stack:         []byte,
 	parent_env:    libc.jmp_buf,
 	coroutine_env: libc.jmp_buf,
+}
+
+CoroutineStarter :: struct($R: typeid, $A: typeid) {
+    using cor: Coroutine(R),
+    start_proc: proc(^Coroutine(R), A) -> R
 }
 
 DEFAULT_STACK_SIZE :: #config(COROUTINE_DEFAULT_STACK_SIZE, mem.Megabyte)
@@ -33,16 +36,16 @@ Returns:
 */
 @(require_results)
 make :: proc(
-	cor_proc: proc(arg: $A) -> $R,
+	cor_proc: proc(cor: ^Coroutine($R), arg: $A) -> R,
 	stack_size := DEFAULT_STACK_SIZE,
 	allocator := context.allocator,
 ) -> (
-	result: Coroutine(A, R),
+	result: CoroutineStarter(R, A),
 	err: runtime.Allocator_Error,
 ) {
-	result.ret_type_id = typeid_of(R)
+    mem.zero(&result, size_of(result))
 	result.stack = runtime.mem_alloc_bytes(stack_size, 16, allocator) or_return
-	result.cor_proc = cor_proc
+	result.start_proc = cor_proc
 	result.finished = false
 	return
 }
@@ -63,7 +66,8 @@ Inputs:
 - cor: The coroutine struct to start
 - arg: The argument to pass to the coroutine proc
 */
-start :: proc(cor: ^Coroutine($A, $R), arg: A) {
+
+start :: proc(cor: ^CoroutineStarter($R, $A), arg: A) {
     init_stack_beg := asm() -> rawptr{GET_STACK_PTR,"=r"}()
 	start_coroutine(cor, arg, init_stack_beg)
 }
@@ -80,7 +84,7 @@ Returns:
 - `false` if the coroutine execution has finished, `true` otherwise
 If execution has finished, it will keep returning the final `return` value.
 */
-next :: #force_inline proc(cor: ^Coroutine($A, $R)) -> (R, bool) {
+next :: #force_inline proc(cor: ^Coroutine($R)) -> (R, bool) {
 	context_switch(&cor.parent_env, &cor.coroutine_env)
 	return cor.ret, !cor.finished
 }
@@ -96,8 +100,7 @@ type here.
 Inputs:
 - ret: The value to return to the caller
 */
-yield :: #force_inline proc(ret: $R) {
-	cor := get_coroutine_for_yield(R)
+yield :: #force_inline proc(cor: ^Coroutine($R), ret: R) {
 	cor.ret = ret
 	context_switch(&cor.coroutine_env, &cor.parent_env)
 }
@@ -113,14 +116,16 @@ Inputs:
 - cor: The coroutine to free and destroy
 - allocator: The allocator with which the stack deallocation is done. This should be the same as the one passed to `make` earlier.
 */
-destroy :: proc(cor: ^Coroutine($A, $R), allocator := context.allocator) {
+destroy :: proc(cor: ^Coroutine($R), allocator := context.allocator) {
+    delete(cor.stack, allocator)
 	cor^ = {}
 }
 
 @(private = "file")
-start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A, init_stack_beg: rawptr) {
+start_coroutine :: #force_no_inline proc(cor: ^CoroutineStarter($R, $A), arg: A, init_stack_beg: rawptr) {
 	cor_c := cor
 	arg_c := arg
+    ctx_c := context
 	/*
         Copy the stack to our buffer and point the jmp_buf stack pointer to it.
         Currently this is non-portable as we assume the stack grows downward.
@@ -140,37 +145,20 @@ start_coroutine :: #force_no_inline proc(cor: ^Coroutine($A, $R), arg: A, init_s
 	    asm(rawptr) #side_effect {SET_STACK_PTR,"r"}(stack_end)
 		return
 	} else {
-		context.user_ptr = rawptr(cor_c)
-		context.user_index = (^int)(raw_data(COROUTINE_MARKER))^
 		// we want this so cor_proc can run its defers
-		final_ret := cor.cor_proc(arg_c)
-		end(final_ret)
+        context = ctx_c
+		final_ret := cor.start_proc(cor_c, arg_c)
+		end(&cor_c.cor, final_ret)
 	}
 	unreachable()
 }
 
 @(private = "file")
-end :: #force_inline proc(ret: $R) {
-	cor := get_coroutine_for_yield(R)
+end :: #force_inline proc(cor: ^Coroutine($R), ret: R) {
 	for {
-		yield(ret)
+		yield(cor, ret)
 		cor.finished = true
 	}
-}
-
-@(private = "file")
-get_coroutine_for_yield :: #force_inline proc($R: typeid) -> (cor: ^Coroutine(rawptr, R)) {
-	#assert(size_of(int) <= len(COROUTINE_MARKER_C))
-	if context.user_index != (^int)(raw_data(COROUTINE_MARKER))^ {
-		panic("Attempted to yield from non-coroutine context")
-	}
-	cor = (^Coroutine(rawptr, R))(context.user_ptr)
-	if cor == nil {
-		panic("Missing coroutine object from coroutine context")
-	} else if cor.ret_type_id != typeid_of(R) {
-		panic("Attempted to yield from coroutine with incorrect type")
-	}
-	return
 }
 
 @(private = "file")
@@ -179,13 +167,6 @@ context_switch :: #force_inline proc(from: ^libc.jmp_buf, to: ^libc.jmp_buf) {
 		libc.longjmp(to, 1)
 	}
 }
-
-@(private = "file")
-COROUTINE_MARKER_C :: "COROUTINECONTEXT"
-
-@(private = "file")
-@(rodata)
-COROUTINE_MARKER: string = COROUTINE_MARKER_C
 
 @(private = "file")
 GET_STACK_PTR :: "mov %rsp, $0" when ODIN_ARCH == .amd64 else

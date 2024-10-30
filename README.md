@@ -20,16 +20,16 @@ odin doc deps/coroutines
 
 Finally, here is a minimal example usage of the library, assuming this file is in a directory next to `deps`:
 ```rust
-package test
+package minimal
 
 import cr "../deps/coroutines"
 import "core:log"
 
-example_coroutine :: proc(range: [2]int) -> int {
+example_coroutine :: proc(cor: ^cr.Coroutine(int), range: [2]int) -> int {
 	log.info("Hello from coroutine!")
 	for i in range.x ..< range.y - 1 {
 		log.info("Sending from coroutine:", i)
-		cr.yield(i)
+		cr.yield(cor, i)
 	}
 	log.info("Final send from coroutine:", range.y - 1)
 	return range.y - 1
@@ -43,10 +43,10 @@ main :: proc() {
 	if err != .None {
 		log.panic("Failed to allocate storage for coroutine!")
 	}
-	defer cr.destroy(&my_coroutine)
+	defer cr.destroy(&my_coroutine.cor)
 
 	cr.start(&my_coroutine, [2]int{5, 11})
-	for i in cr.next(&my_coroutine) {
+	for i in cr.next(&my_coroutine.cor) {
 		log.info("Received from coroutine:", i)
 	}
 
@@ -55,17 +55,16 @@ main :: proc() {
 ```
 
 ## Notes
-- The `context` passed to the coroutine proc is the `context` passed to `start`, except for `context.user_index` and `context.user_ptr` which are overwritten with a special marker and a pointer to the `Coroutine` struct, respectively
-- As the coroutine uses `context.user_index` to mark the `context` as part of a coroutine and `context.user_ptr` to point to the `Coroutine` struct, if you need to use these you will need to create a scope in which to overwrite them, and refrain from calling `yield` in this scope
-- `yield` is not type checked, instead its type is checked at run time against the return type's `typeid` stored in the `Coroutine` struct. This may trip you up if you call `yield` with literals.
+- Coroutine procs are marked by their first parameter being a pointer to `Coroutine(R)` with `R` being the return value, and a parameter of type `A`, and a return type of `R`. This allows you to pass control of a coroutine to another proc as long with different parameters as long as it returns the same type.
+- The `context` passed to the coroutine proc is the `context` passed to `start`
 - The `Coroutine` struct is only responsible for freeing its own call stack space
 - The user is responsible for freeing any resources used/acquired by the coroutine, by either letting the `defer`ed statements run via running the coroutine to the end, or by manually freeing them
-- You can normally return from a coroutine proc, this counts as your last `yield` and should guarantee that all `defer`ed statements are run as long as the coroutine is run to the end.
+- You can normally return from a coroutine proc, this counts as your last `yield` and should guarantee that all `defer`ed statements are run as long as the coroutine is run to the end. Accordingly your return type should match the return type defined in the coroutine struct.
 - Due to its signature, `next` can be used as a for-loop proc
 - `jmp_buf` is huge, probably needlessly
 - Only one argument and return value are supported
 - There are no functions for `await`ing conditions in coroutines or having coroutines be in a waiting status, they always must run to the next return value
-- There is no way to have a tiny in-line stack with no allocations (i.e. for small coroutines that are created/called often)
+- There is no way to have a tiny in-line stack with no allocations (i.e. for small coroutines that are created/called often), but things like arenas backed by an on-stack buffer can be used for a similar purpose.
 
 ## (Known) Non-portable Parts
 - We assume the stack grows downwards (from high towards low addresses)
